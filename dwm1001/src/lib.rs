@@ -56,6 +56,7 @@ use nrf52832_hal::{
             P0_20,
             P0_28,
             P0_29,
+            Parts,
         },
         Floating,
         Input,
@@ -79,6 +80,9 @@ use nrf52832_hal::{
         Baudrate as UartBaudrate,
     },
     Spim,
+    timer::{
+        Instance as TimerInstance,
+    },
     Timer,
     Twim,
 };
@@ -122,7 +126,9 @@ pub fn new_usb_uarte<TX, RX>(
     rxd_pin: P0_11<RX>,
     config: UsbUarteConfig
 ) -> Uarte<nrf52::UARTE0> {
-    uart0.constrain(uarte::Pins {
+    Uarte::new(
+        uart0,
+        uarte::Pins {
             txd: txd_pin.into_push_pull_output(Level::High).degrade(),
             rxd: rxd_pin.into_floating_input().degrade(),
             cts: None,
@@ -152,7 +158,9 @@ pub fn new_dw1000<SCK, MOSI, MISO, CS>(
         orc: 0,
     });
 
-    let spim = spim.constrain(spim::Pins {
+    let spim = Spim::new(
+        spim,
+        spim::Pins {
             sck : sck.into_push_pull_output(Level::Low).degrade(),
             mosi: Some(mosi.into_push_pull_output(Level::Low).degrade()),
             miso: Some(miso.into_floating_input().degrade()),
@@ -171,7 +179,8 @@ pub fn new_acc_twim<SCL, SDA>(
     scl: P0_28<SCL>,
     sda: P0_29<SDA>,
 ) -> Twim<nrf52::TWIM1> {
-    twim.constrain(
+    Twim::new(
+        twim,
         twim::Pins {
             scl: scl.into_floating_input().degrade(),
             sda: sda.into_floating_input().degrade(),
@@ -497,7 +506,7 @@ impl DWM1001 {
     }
 
     fn new(cp: CorePeripherals, p: Peripherals) -> Self {
-        let pins = p.P0.split();
+        let pins = Parts::new(p.P0);
 
 
         // Some notes about the hardcoded configuration of `Uarte`:
@@ -798,14 +807,14 @@ impl Led {
     pub fn enable(&mut self) {
         // https://github.com/braun-robotics/rust-dwm1001/issues/94
         #[allow(deprecated)]
-        self.0.set_low()
+        let _ = self.0.set_low();
     }
 
     /// Disable the LED
     pub fn disable(&mut self) {
         // https://github.com/braun-robotics/rust-dwm1001/issues/94
         #[allow(deprecated)]
-        self.0.set_high()
+        let _ = self.0.set_high();
     }
 }
 
@@ -882,11 +891,10 @@ impl DW_IRQ {
     /// - This method disables interrupt handlers. No interrupt handler will be
     ///   called while this method is active.
     pub fn wait_for_interrupts<T>(&mut self,
-        nvic:   &mut nrf52::NVIC,
         gpiote: &mut nrf52::GPIOTE,
         timer:  &mut Timer<T>,
     )
-        where T: TimerExt
+        where T: TimerInstance
     {
         gpiote.config[0].write(|w| {
             let w = w
@@ -904,7 +912,7 @@ impl DW_IRQ {
             // Safe, as I don't believe this can interfere with the critical
             // section we're in.
             unsafe { nrf52::NVIC::unmask(Interrupt::GPIOTE); }
-            timer.enable_interrupt(nvic);
+            timer.enable_interrupt(true);
 
             asm::dsb();
             asm::wfi();
@@ -912,7 +920,7 @@ impl DW_IRQ {
             // If we don't do this, the (probably non-existing) interrupt
             // handler will be called as soon as we exit this closure.
             nrf52::NVIC::mask(Interrupt::GPIOTE);
-            timer.disable_interrupt(nvic);
+            timer.disable_interrupt(true);
         });
 
         gpiote.events_in[0].write(|w| unsafe { w.bits(0) });
